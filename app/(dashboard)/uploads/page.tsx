@@ -171,11 +171,21 @@ export default function UploadsPage() {
     }
 
     setAudioStatus('loading')
-    setAudioMessage('Uploading and transcribing… this may take a minute.')
+    setAudioMessage('Uploading file to storage…')
 
     try {
       const supabase = createClient()
 
+      // Step 1: Upload to Supabase Storage (bypasses Vercel's 4.5 MB body limit)
+      const storagePath = `temp/${Date.now()}-${audioFile.name}`
+      const { error: storageErr } = await supabase.storage
+        .from('audio-uploads')
+        .upload(storagePath, audioFile)
+      if (storageErr) throw storageErr
+
+      setAudioMessage('Transcribing with AI… this may take a minute.')
+
+      // Step 2: Create media file record
       const { data: mf, error: mfErr } = await supabase
         .from('media_files')
         .insert({
@@ -188,14 +198,17 @@ export default function UploadsPage() {
         .single()
       if (mfErr) throw mfErr
 
+      // Step 3: Call transcription API with storage path only (no file in body)
       const fd = new FormData()
-      fd.append('file', audioFile)
+      fd.append('storagePath', storagePath)
       fd.append('mediaFileId', mf.id)
       fd.append('eventId', selectedEvent)
       fd.append('model', transcribeModel)
 
       const res = await fetch('/api/transcripts/transcribe', { method: 'POST', body: fd })
-      const result = await res.json()
+      const text = await res.text()
+      let result: { segments?: number; chunks?: number; error?: string }
+      try { result = JSON.parse(text) } catch { throw new Error(text || 'Transcription failed') }
       if (!res.ok) throw new Error(result.error ?? 'Transcription failed')
 
       setAudioStatus('success')
