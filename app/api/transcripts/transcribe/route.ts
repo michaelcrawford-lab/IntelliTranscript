@@ -7,6 +7,13 @@ export const maxDuration = 300
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
+const groq = new OpenAI({
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: 'https://api.groq.com/openai/v1',
+})
+
+const GROQ_MODELS = new Set(['whisper-large-v3-turbo', 'whisper-large-v3', 'distil-whisper-large-v3-en'])
+
 function diarizedJsonToSrt(data: Record<string, unknown>): string {
   const segments = (data.segments as Array<{
     start?: number
@@ -66,6 +73,18 @@ export async function POST(req: NextRequest) {
         response_format: 'diarized_json',
       })
       srtContent = diarizedJsonToSrt(response as unknown as Record<string, unknown>)
+    } else if (GROQ_MODELS.has(model)) {
+      const response = await groq.audio.transcriptions.create({
+        model,
+        file,
+        response_format: 'verbose_json',
+        timestamp_granularities: ['segment'],
+      })
+      // Convert verbose_json segments to SRT
+      const segs = (response as unknown as { segments?: Array<{ start: number; end: number; text: string }> }).segments ?? []
+      srtContent = segs.length
+        ? segs.map((s, i) => `${i + 1}\n${toSrtTs(s.start)} --> ${toSrtTs(s.end)}\n${s.text.trim()}`).join('\n\n')
+        : (response as unknown as { text: string }).text ?? ''
     } else {
       const response = await openai.audio.transcriptions.create({
         model,

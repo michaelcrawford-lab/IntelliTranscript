@@ -62,7 +62,7 @@ export default function UploadsPage() {
 
   // Audio transcription mode
   const [audioFile, setAudioFile] = useState<File | null>(null)
-  const [transcribeModel, setTranscribeModel] = useState('gpt-4o-transcribe-diarize')
+  const [transcribeModel, setTranscribeModel] = useState('whisper-large-v3-turbo')
   const [audioStatus, setAudioStatus] = useState<Status>('idle')
   const [audioMessage, setAudioMessage] = useState('')
 
@@ -348,10 +348,12 @@ export default function UploadsPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="gpt-4o-transcribe-diarize">gpt-4o-transcribe-diarize (recommended — speaker labels)</SelectItem>
-                  <SelectItem value="gpt-4o-transcribe">gpt-4o-transcribe (no diarization)</SelectItem>
-                  <SelectItem value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe (faster, cheaper)</SelectItem>
-                  <SelectItem value="whisper-1">whisper-1 (legacy)</SelectItem>
+                  <SelectItem value="whisper-large-v3-turbo">Groq — whisper-large-v3-turbo (free, fast)</SelectItem>
+                  <SelectItem value="whisper-large-v3">Groq — whisper-large-v3 (free, most accurate)</SelectItem>
+                  <SelectItem value="distil-whisper-large-v3-en">Groq — distil-whisper (free, English only)</SelectItem>
+                  <SelectItem value="gpt-4o-transcribe-diarize">OpenAI — gpt-4o-transcribe-diarize (speaker labels)</SelectItem>
+                  <SelectItem value="gpt-4o-transcribe">OpenAI — gpt-4o-transcribe</SelectItem>
+                  <SelectItem value="gpt-4o-mini-transcribe">OpenAI — gpt-4o-mini-transcribe</SelectItem>
                 </SelectContent>
               </Select>
             </div>
