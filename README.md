@@ -1,36 +1,133 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# IntelliTranscript
 
-## Getting Started
+**Intellibus Hackathon Archive & Search Platform**
 
-First, run the development server:
+> Search every speech, pitch, award, and idea from every Intellibus AI Hackathon.
+
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 16 (App Router) + TypeScript |
+| Styling | Tailwind CSS v4 + shadcn/ui |
+| State | Zustand |
+| Backend/DB | Supabase (PostgreSQL + Auth + Storage) |
+| Vector Search | pgvector + all-MiniLM-L6-v2 embeddings |
+| AI Chatbot | Groq API (llama-3.3-70b-versatile) |
+| Transcription | OpenAI Whisper (local Python script) |
+| Deployment | Vercel + Supabase |
+
+## Setup
+
+### 1. Environment variables
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.local.example .env.local
+# Fill in your Supabase and Groq credentials
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Supabase
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Create a project at [supabase.com](https://supabase.com)
+2. Enable the **pgvector** extension in the Supabase dashboard (Database → Extensions)
+3. Apply migrations:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
+supabase db push
+```
 
-## Learn More
+### 3. Install & run
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 4. Create your first admin
 
-## Deploy on Vercel
+1. Sign up via `/login`
+2. In the Supabase dashboard, update your user's `role` to `super_admin` in the `public.users` table
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Pages
+
+| Route | Description |
+|---|---|
+| `/` | Dashboard with metrics |
+| `/events` | All hackathon events |
+| `/events/new` | Create an event |
+| `/events/[id]` | Event detail with transcripts, speakers, teams, awards |
+| `/events/[id]/transcript` | Transcript viewer with video player |
+| `/search` | Full-text search across all transcripts |
+| `/chat` | AI assistant (RAG-powered) |
+| `/speakers` | Speaker directory |
+| `/speakers/[id]` | Speaker profile |
+| `/teams` | Team archive |
+| `/awards` | Awards by event |
+| `/reports` | Export transcripts as TXT, CSV, SRT |
+| `/uploads` | Upload SRT/VTT/TXT transcripts or link YouTube |
+| `/admin/users` | User management |
+| `/admin/settings` | Platform settings |
+
+## Transcript Upload Workflow
+
+### Option A: Upload existing SRT/VTT/TXT files
+
+Go to `/uploads`, select an event, and drop your transcript file.
+
+### Option B: Transcribe locally with Whisper
+
+```bash
+pip install openai-whisper
+python scripts/transcribe.py path/to/recording.mp4 --format srt --model large-v3
+# Then upload the .srt file via /uploads
+```
+
+### Option C: Link a YouTube video
+
+Paste the YouTube URL in `/uploads` to link it to an event. Upload the transcript separately.
+
+## Generating Embeddings (for AI search)
+
+After uploading transcripts, generate vector embeddings:
+
+```bash
+curl -X POST http://localhost:3000/api/transcripts/embed \
+  -H "Content-Type: application/json" \
+  -d '{"eventId": "your-event-id"}'
+```
+
+Run this for each event. Embeddings enable the AI chatbot semantic search.
+
+## Deployment
+
+```bash
+vercel --prod
+# Set env vars in Vercel dashboard:
+# NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
+# SUPABASE_SERVICE_ROLE_KEY, GROQ_API_KEY
+```
+
+## User Roles
+
+| Role | Permissions |
+|---|---|
+| `super_admin` | Full access |
+| `admin` | Upload, manage events, generate reports |
+| `editor` | Correct transcripts, rename speakers |
+| `viewer` | Search and view approved transcripts |
+| `restricted` | Selected events only |
+
+## Architecture Notes
+
+- `@base-ui/react` is used by this shadcn/ui version — `asChild` prop does not exist. Use `ButtonLink` (`components/ui/button-link.tsx`) for link-as-button patterns.
+- Groq API key is **server-side only** — never exposed to the browser.
+- Large videos should be hosted on YouTube or Google Drive. Store only the link in Supabase.
+- Embeddings are 384-dimensional (all-MiniLM-L6-v2). The pgvector index uses `ivfflat` with 100 lists.
