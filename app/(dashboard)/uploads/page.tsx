@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Upload, Link2, FileText, Loader2, CheckCircle, AlertCircle, Mic } from 'lucide-react'
+import { Textarea } from '@/components/ui/textarea'
+import { Upload, Link2, FileText, Loader2, CheckCircle, AlertCircle, Mic, ClipboardPaste } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 function extractYouTubeId(url: string): string | null {
@@ -66,6 +67,11 @@ export default function UploadsPage() {
   const [audioStatus, setAudioStatus] = useState<Status>('idle')
   const [audioMessage, setAudioMessage] = useState('')
 
+  // Paste mode
+  const [pasteText, setPasteText] = useState('')
+  const [pasteStatus, setPasteStatus] = useState<Status>('idle')
+  const [pasteMessage, setPasteMessage] = useState('')
+
   const loadEvents = async () => {
     if (eventsLoaded) return
     const supabase = createClient()
@@ -105,10 +111,10 @@ export default function UploadsPage() {
       }
 
       if (transcriptFile) {
-        const ext = transcriptFile.name.split('.').pop()?.toLowerCase() as 'srt' | 'vtt' | 'txt' | undefined
-        if (!['srt', 'vtt', 'txt'].includes(ext ?? '')) {
+        const ext = transcriptFile.name.split('.').pop()?.toLowerCase()
+        if (!['srt', 'vtt', 'txt', 'json'].includes(ext ?? '')) {
           setTranscriptStatus('error')
-          setTranscriptMessage('Only .srt, .vtt, and .txt files are supported.')
+          setTranscriptMessage('Supported formats: .srt, .vtt, .txt, .json')
           return
         }
 
@@ -138,7 +144,7 @@ export default function UploadsPage() {
         await supabase.from('media_files').update({ processing_status: 'completed' }).eq('id', mf.id)
 
         setTranscriptStatus('success')
-        setTranscriptMessage(`Imported ${result.segments} segments and ${result.chunks} chunks.`)
+        setTranscriptMessage(`Imported ${result.segments} segments, ${result.speakers ?? 0} speakers.`)
         setTimeout(() => router.push(`/events/${selectedEvent}`), 2000)
         return
       }
@@ -206,6 +212,44 @@ export default function UploadsPage() {
     } catch (err) {
       setAudioStatus('error')
       setAudioMessage((err as Error).message)
+    }
+  }
+
+  // ── Option D: Paste transcript text ──────────────────────────────────────
+  const handlePasteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedEvent) { setPasteStatus('error'); setPasteMessage('Please select an event.'); return }
+    if (!pasteText.trim()) { setPasteStatus('error'); setPasteMessage('Please paste some transcript text.'); return }
+    setPasteStatus('loading')
+    setPasteMessage('')
+    try {
+      const supabase = createClient()
+      const { data: mf, error: mfErr } = await supabase
+        .from('media_files')
+        .insert({
+          event_id: selectedEvent,
+          title: mediaTitle || 'Pasted transcript',
+          source_type: 'upload',
+          processing_status: 'processing',
+        })
+        .select()
+        .single()
+      if (mfErr) throw mfErr
+
+      const res = await fetch('/api/transcripts/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mediaFileId: mf.id, eventId: selectedEvent, content: pasteText, format: 'auto' }),
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error ?? 'Failed to parse transcript')
+      await supabase.from('media_files').update({ processing_status: 'completed' }).eq('id', mf.id)
+      setPasteStatus('success')
+      setPasteMessage(`Imported ${result.segments} segments, ${result.speakers ?? 0} speakers.`)
+      setTimeout(() => router.push(`/events/${selectedEvent}`), 2000)
+    } catch (err) {
+      setPasteStatus('error')
+      setPasteMessage((err as Error).message)
     }
   }
 
@@ -292,7 +336,7 @@ export default function UploadsPage() {
               <div className="border-2 border-dashed rounded-md p-6 text-center hover:border-primary transition-colors">
                 <input
                   type="file"
-                  accept=".srt,.vtt,.txt"
+                  accept=".srt,.vtt,.txt,.json"
                   onChange={(e) => setTranscriptFile(e.target.files?.[0] ?? null)}
                   className="sr-only"
                   id="transcriptFileInput"
@@ -308,7 +352,7 @@ export default function UploadsPage() {
                   ) : (
                     <div>
                       <p className="text-sm font-medium">Click to choose a file</p>
-                      <p className="text-xs text-muted-foreground">SRT, VTT, or TXT</p>
+                      <p className="text-xs text-muted-foreground">SRT, VTT, TXT, or JSON</p>
                     </div>
                   )}
                 </label>
@@ -396,6 +440,56 @@ export default function UploadsPage() {
                 <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Transcribing…</>
               ) : (
                 <><Mic className="w-4 h-4 mr-2" />Transcribe & Import</>
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* ── Card C: Paste transcript text ──────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <ClipboardPaste className="w-4 h-4" />
+            Option C — Paste Transcript Text
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handlePasteSubmit} className="space-y-5">
+            {eventSelector}
+
+            <div className="space-y-2">
+              <Label htmlFor="pasteTitle">Recording Title</Label>
+              <Input
+                id="pasteTitle"
+                value={mediaTitle}
+                onChange={(e) => setMediaTitle(e.target.value)}
+                placeholder="Opening Ceremony · March 15 2025"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="pasteArea" className="flex items-center gap-2">
+                <ClipboardPaste className="w-4 h-4" />
+                Transcript Content
+                <span className="text-xs font-normal text-muted-foreground ml-1">SRT, VTT, JSON, or plain text — auto-detected</span>
+              </Label>
+              <Textarea
+                id="pasteArea"
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                placeholder={`Paste your transcript here. Any of these formats work:\n\n• SRT:  1\\n00:00:01,000 --> 00:00:04,000\\n[Speaker] Hello everyone\n• JSON: [{"start":1,"end":4,"text":"Hello","speaker":"John"}]\n• Plain text: one line per segment\n• Speaker prefix: John Smith: Welcome to the event`}
+                className="font-mono text-xs min-h-52 resize-y"
+              />
+            </div>
+
+            <StatusBadge status={pasteStatus} message={pasteMessage} />
+
+            <Button type="submit" className="w-full" disabled={pasteStatus === 'loading'}>
+              {pasteStatus === 'loading' ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing…</>
+              ) : (
+                <><ClipboardPaste className="w-4 h-4 mr-2" />Import Pasted Text</>
               )}
             </Button>
           </form>

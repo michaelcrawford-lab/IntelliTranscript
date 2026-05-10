@@ -110,13 +110,63 @@ export function parsePlainText(content: string): ParsedSegment[] {
   })
 }
 
+// Parse JSON transcripts — supports several common shapes:
+//   [{ start, end, text, speaker? }]          — generic array
+//   { segments: [{ start, end, text }] }       — Whisper verbose_json
+//   { results: { items: [{ start_time, end_time, alternatives: [{content}] }] } } — AWS Transcribe
+export function parseJSON(content: string): ParsedSegment[] {
+  let parsed: unknown
+  try { parsed = JSON.parse(content) } catch { return [] }
+
+  // Normalise to an array of raw items
+  let items: unknown[] = []
+  if (Array.isArray(parsed)) {
+    items = parsed
+  } else if (parsed && typeof parsed === 'object') {
+    const obj = parsed as Record<string, unknown>
+    if (Array.isArray(obj.segments)) items = obj.segments as unknown[]
+    else if (Array.isArray(obj.utterances)) items = obj.utterances as unknown[]
+    else if (Array.isArray(obj.words)) items = obj.words as unknown[]
+  }
+
+  const segments: ParsedSegment[] = []
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const it = item as Record<string, unknown>
+
+    const start = Number(it.start ?? it.start_time ?? it.startTime ?? 0)
+    const end = Number(it.end ?? it.end_time ?? it.endTime ?? start + 1)
+    const text = String(it.text ?? it.transcript ?? it.content ?? '').trim()
+    const speaker = it.speaker ?? it.speaker_label ?? it.speakerLabel
+
+    if (!text) continue
+
+    const { speaker_name, clean_text } = speaker
+      ? { speaker_name: String(speaker), clean_text: text }
+      : extractSpeaker(text)
+
+    segments.push({ start_time_seconds: start, end_time_seconds: end, transcript_text: clean_text, speaker_name })
+  }
+  return segments
+}
+
+// Auto-detect format from content
+export function detectFormat(content: string): 'srt' | 'vtt' | 'json' | 'txt' {
+  const trimmed = content.trim()
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json'
+  if (trimmed.startsWith('WEBVTT')) return 'vtt'
+  if (/^\d+\n\d{2}:\d{2}:\d{2},\d{3}\s*-->/m.test(trimmed)) return 'srt'
+  return 'txt'
+}
+
 export function parseTranscript(
   content: string,
-  format: 'srt' | 'vtt' | 'txt'
+  format: 'srt' | 'vtt' | 'txt' | 'json'
 ): ParsedSegment[] {
   switch (format) {
     case 'srt': return parseSRT(content)
     case 'vtt': return parseVTT(content)
+    case 'json': return parseJSON(content)
     case 'txt': return parsePlainText(content)
   }
 }

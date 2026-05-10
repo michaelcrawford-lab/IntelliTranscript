@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
-import { parseTranscript, chunkSegments, resolveSpeakers } from '@/lib/utils/transcript-parser'
+import { parseTranscript, chunkSegments, resolveSpeakers, detectFormat } from '@/lib/utils/transcript-parser'
 
 export async function POST(request: Request) {
   try {
@@ -10,11 +10,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    if (!['srt', 'vtt', 'txt'].includes(format)) {
+    // 'auto' lets the server detect the format from content
+    const resolvedFormat = format === 'auto' ? detectFormat(content) : format
+    if (!['srt', 'vtt', 'txt', 'json'].includes(resolvedFormat)) {
       return NextResponse.json({ error: 'Unsupported format' }, { status: 400 })
     }
 
-    const segments = parseTranscript(content, format as 'srt' | 'vtt' | 'txt')
+    const segments = parseTranscript(content, resolvedFormat as 'srt' | 'vtt' | 'txt' | 'json')
 
     if (segments.length === 0) {
       return NextResponse.json({ error: 'No segments parsed from file' }, { status: 422 })
