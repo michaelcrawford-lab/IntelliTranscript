@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ButtonLink } from '@/components/ui/button-link'
+import { DeleteButton } from '@/components/ui/delete-button'
 import { Calendar, FileText, Mic, Users, Trophy, Upload } from 'lucide-react'
 
 export default async function EventDetailPage({
@@ -15,7 +16,7 @@ export default async function EventDetailPage({
   const { id } = await params
   const supabase = await createClient()
 
-  const [eventRes, mediaRes, speakersRes, teamsRes, awardsRes] = await Promise.all([
+  const [eventRes, mediaRes, speakersRes, teamsRes, awardsRes, userRes] = await Promise.all([
     supabase.from('events').select('*').eq('id', id).single(),
     supabase.from('media_files').select('*').eq('event_id', id).order('created_at'),
     supabase
@@ -25,6 +26,7 @@ export default async function EventDetailPage({
       .not('speaker_id', 'is', null),
     supabase.from('teams').select('*, team_members(*)').eq('event_id', id),
     supabase.from('awards').select('*').eq('event_id', id),
+    supabase.from('users').select('role').single(),
   ])
 
   if (!eventRes.data) notFound()
@@ -33,6 +35,7 @@ export default async function EventDetailPage({
   const mediaFiles = mediaRes.data ?? []
   const teams = teamsRes.data ?? []
   const awards = awardsRes.data ?? []
+  const isAdmin = userRes.data?.role === 'super_admin' || userRes.data?.role === 'admin'
 
   // Deduplicate speakers
   const speakerMap = new Map<string, { id: string; full_name: string; role: string | null; organization: string | null }>()
@@ -75,10 +78,22 @@ export default async function EventDetailPage({
             )}
           </div>
         </div>
-        <ButtonLink href="/uploads">
-          <Upload className="w-4 h-4 mr-2" />
-          Upload Transcript
-        </ButtonLink>
+        <div className="flex items-center gap-2 shrink-0">
+          <ButtonLink href="/uploads">
+            <Upload className="w-4 h-4 mr-2" />
+            Upload Transcript
+          </ButtonLink>
+          {isAdmin && (
+            <DeleteButton
+              table="events"
+              id={event.id}
+              label={event.title}
+              description={`Delete "${event.title}"? All transcripts, speakers, teams, and awards will also be deleted. This cannot be undone.`}
+              redirectTo="/events"
+              variant="full"
+            />
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="transcripts">
@@ -112,16 +127,26 @@ export default async function EventDetailPage({
           ) : (
             mediaFiles.map((mf) => (
               <Card key={mf.id} className="hover:shadow-sm transition-shadow">
-                <CardContent className="py-4 flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-sm">{mf.title ?? 'Untitled recording'}</p>
+                <CardContent className="py-4 flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm truncate">{mf.title ?? 'Untitled recording'}</p>
                     <p className="text-xs text-muted-foreground capitalize">
                       {mf.source_type} · {mf.processing_status}
                     </p>
                   </div>
-                  <ButtonLink href={`/events/${id}/transcript?mediaId=${mf.id}`} variant="outline" size="sm">
-                    View Transcript
-                  </ButtonLink>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <ButtonLink href={`/events/${id}/transcript?mediaId=${mf.id}`} variant="outline" size="sm">
+                      View Transcript
+                    </ButtonLink>
+                    {isAdmin && (
+                      <DeleteButton
+                        table="media_files"
+                        id={mf.id}
+                        label={mf.title ?? 'recording'}
+                        description="This will delete the recording and all its transcript segments. This cannot be undone."
+                      />
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             ))
