@@ -3,7 +3,7 @@ import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/server'
 import { parseTranscript, chunkSegments } from '@/lib/utils/transcript-parser'
 
-export const maxDuration = 300 // 5 min — long enough for large transcriptions
+export const maxDuration = 300
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -40,30 +40,21 @@ function pad(n: number) {
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
-    const storagePath = formData.get('storagePath') as string | null
+    const file = formData.get('file') as File | null
     const mediaFileId = formData.get('mediaFileId') as string | null
     const eventId = formData.get('eventId') as string | null
     const model = (formData.get('model') as string) || 'gpt-4o-transcribe-diarize'
 
-    if (!storagePath || !mediaFileId || !eventId) {
-      return NextResponse.json({ error: 'storagePath, mediaFileId, and eventId are required' }, { status: 400 })
+    if (!file || !mediaFileId || !eventId) {
+      return NextResponse.json({ error: 'file, mediaFileId, and eventId are required' }, { status: 400 })
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File exceeds 25 MB limit' }, { status: 413 })
     }
 
     const supabase = await createAdminClient()
 
-    // Download file from Supabase Storage (bypasses Vercel body size limit)
-    const { data: blob, error: downloadErr } = await supabase.storage
-      .from('audio-uploads')
-      .download(storagePath)
-    if (downloadErr) throw new Error(`Storage download failed: ${downloadErr.message}`)
-
-    const fileName = storagePath.split('/').pop() || 'audio.mp3'
-    const file = new File([blob], fileName, { type: blob.type || 'audio/mpeg' })
-
-    // Clean up storage immediately after download
-    await supabase.storage.from('audio-uploads').remove([storagePath])
-
-    // Mark media file as processing
     await supabase.from('media_files').update({ processing_status: 'processing' }).eq('id', mediaFileId)
 
     let srtContent: string
@@ -84,11 +75,9 @@ export async function POST(req: NextRequest) {
       srtContent = response as unknown as string
     }
 
-    // Parse SRT into segments
     const segments = parseTranscript(srtContent, 'srt')
     const chunks = chunkSegments(segments)
 
-    // Insert segments
     if (segments.length > 0) {
       const rows = segments.map((seg) => ({
         event_id: eventId,
@@ -98,7 +87,6 @@ export async function POST(req: NextRequest) {
         transcript_text: seg.transcript_text,
         reviewed_status: 'pending' as const,
       }))
-
       const BATCH = 200
       for (let i = 0; i < rows.length; i += BATCH) {
         const { error } = await supabase.from('transcript_segments').insert(rows.slice(i, i + BATCH))
@@ -106,7 +94,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Insert chunks for RAG
     if (chunks.length > 0) {
       const chunkRows = chunks.map((c) => ({
         event_id: eventId,
@@ -118,7 +105,6 @@ export async function POST(req: NextRequest) {
       await supabase.from('transcript_chunks').insert(chunkRows)
     }
 
-    // Mark completed
     await supabase.from('media_files').update({ processing_status: 'completed' }).eq('id', mediaFileId)
 
     return NextResponse.json({ segments: segments.length, chunks: chunks.length })
