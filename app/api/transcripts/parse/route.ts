@@ -1,6 +1,6 @@
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
-import { parseTranscript, chunkSegments } from '@/lib/utils/transcript-parser'
+import { parseTranscript, chunkSegments, resolveSpeakers } from '@/lib/utils/transcript-parser'
 
 export async function POST(request: Request) {
   try {
@@ -20,9 +20,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No segments parsed from file' }, { status: 422 })
     }
 
-    const supabase = await createClient()
+    const supabase = await createAdminClient()
 
-    // Batch insert segments in chunks of 500 to avoid request size limits
+    // Resolve speaker names → IDs (creates missing speakers)
+    const speakerMap = await resolveSpeakers(segments, eventId, supabase)
+
+    // Batch insert segments
     const BATCH = 500
     for (let i = 0; i < segments.length; i += BATCH) {
       const batch = segments.slice(i, i + BATCH).map((seg) => ({
@@ -31,6 +34,7 @@ export async function POST(request: Request) {
         start_time_seconds: seg.start_time_seconds,
         end_time_seconds: seg.end_time_seconds,
         transcript_text: seg.transcript_text,
+        speaker_id: seg.speaker_name ? (speakerMap.get(seg.speaker_name) ?? null) : null,
         reviewed_status: 'pending' as const,
       }))
 
@@ -38,7 +42,7 @@ export async function POST(request: Request) {
       if (error) throw error
     }
 
-    // Create RAG chunks
+    // Create RAG chunks (include speaker names for context)
     const chunks = chunkSegments(segments, 10)
     const chunkRows = chunks.map((c) => ({
       event_id: eventId,
@@ -46,6 +50,7 @@ export async function POST(request: Request) {
       chunk_text: c.chunk_text,
       start_time_seconds: c.start_time_seconds,
       end_time_seconds: c.end_time_seconds,
+      speaker_names: c.speaker_names,
     }))
 
     for (let i = 0; i < chunkRows.length; i += BATCH) {
@@ -56,6 +61,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       segments: segments.length,
       chunks: chunks.length,
+      speakers: speakerMap.size,
     })
   } catch (err) {
     console.error('Parse error:', err)

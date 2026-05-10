@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/server'
-import { parseTranscript, chunkSegments } from '@/lib/utils/transcript-parser'
+import { parseTranscript, chunkSegments, resolveSpeakers } from '@/lib/utils/transcript-parser'
 
 export const maxDuration = 300
 
@@ -97,6 +97,9 @@ export async function POST(req: NextRequest) {
     const segments = parseTranscript(srtContent, 'srt')
     const chunks = chunkSegments(segments)
 
+    // Resolve speaker names → IDs (creates missing speakers)
+    const speakerMap = await resolveSpeakers(segments, eventId, supabase)
+
     if (segments.length > 0) {
       const rows = segments.map((seg) => ({
         event_id: eventId,
@@ -104,6 +107,7 @@ export async function POST(req: NextRequest) {
         start_time_seconds: seg.start_time_seconds,
         end_time_seconds: seg.end_time_seconds,
         transcript_text: seg.transcript_text,
+        speaker_id: seg.speaker_name ? (speakerMap.get(seg.speaker_name) ?? null) : null,
         reviewed_status: 'pending' as const,
       }))
       const BATCH = 200
@@ -120,6 +124,7 @@ export async function POST(req: NextRequest) {
         chunk_text: c.chunk_text,
         start_time_seconds: c.start_time_seconds,
         end_time_seconds: c.end_time_seconds,
+        speaker_names: c.speaker_names,
       }))
       await supabase.from('transcript_chunks').insert(chunkRows)
     }
